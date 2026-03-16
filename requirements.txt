@@ -1,0 +1,6 @@
+torch
+requests
+pyarrow
+rustbpe
+tiktoken
+kernels
