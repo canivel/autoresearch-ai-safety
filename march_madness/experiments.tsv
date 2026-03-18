@@ -5,3 +5,5 @@ experiment_id	description	brier_score	brier_delta	accuracy	notes	kept
 003	Ensemble weights: elo=0.35, seed=0.15, stats=0.30, ord=0.20	0.1723	-0.0019	N/A	Better weight distribution found in grid search	yes
 004	Bradley-Terry team quality model (RADDAR-style)	0.1925	+0.0183	75.4%	Standalone trained model overfits, esp 2022	no
 005	30% trained + 70% ensemble blend	0.1680	-0.0062	75.0%	Best blend ratio. 2022=0.1898, 2023=0.1820, 2024=0.1736, 2025=0.1268	yes
+006	Fix Elo params in submission gen + momentum features	0.1670	-0.0010	76.1%	build_elo_ratings was using k=20,home=100 not optimized params. Added momentum feature (top importance=2.51)	yes
+007	Optimized seed_coeff=0.30, blend=0.20/0.80	0.1648	-0.0022	76.1%	2022=0.1873/73.1%, 2023=0.1815/72.4%, 2024=0.1666/76.1%, 2025=0.1239/82.8%	yes

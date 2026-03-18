@@ -57,6 +57,7 @@ class EloSystem:
         self.reversion = reversion
         self.mov_coeff = mov_coeff
         self.ratings = defaultdict(lambda: self.mean_elo)
+        self.recent_results = defaultdict(list)  # Track recent game results for momentum
 
     def expected_score(self, rating_a, rating_b):
         """Expected score for team A against team B."""
@@ -90,6 +91,10 @@ class EloSystem:
         self.ratings[team_w] += k_adj * (1 - expected_w)
         self.ratings[team_l] += k_adj * (0 - (1 - expected_w))
 
+        # Track recent results (1=win, 0=loss, with margin info)
+        self.recent_results[team_w].append((1, margin if margin else 0))
+        self.recent_results[team_l].append((0, -(margin if margin else 0)))
+
     def new_season(self):
         """Revert ratings toward mean for a new season."""
         for team in self.ratings:
@@ -97,6 +102,15 @@ class EloSystem:
                 self.ratings[team] * (1 - self.reversion)
                 + self.mean_elo * self.reversion
             )
+        self.recent_results.clear()
+
+    def get_momentum(self, team_id, n_games=10):
+        """Get team momentum from recent games (win rate in last N games)."""
+        results = self.recent_results.get(team_id, [])
+        if not results:
+            return 0.5
+        recent = results[-n_games:]
+        return sum(r[0] for r in recent) / len(recent)
 
     def predict(self, team_a, team_b):
         """Predict probability of team_a beating team_b on neutral court."""
@@ -259,7 +273,7 @@ def parse_seed_number(seed_str):
         return 16
 
 
-def seed_probability(seed_a, seed_b, coeff=0.175):
+def seed_probability(seed_a, seed_b, coeff=0.30):
     """Probability estimate based purely on seeds."""
     diff = seed_b - seed_a  # Positive means team A has better (lower) seed
     return 1.0 / (1.0 + 10 ** (-diff * coeff))
@@ -269,8 +283,8 @@ def build_elo_ratings(data_dir):
     """Build Elo ratings from all historical game data."""
     print("Building Elo ratings from historical data...")
 
-    men_elo = EloSystem(k=20, home_advantage=100)
-    women_elo = EloSystem(k=20, home_advantage=100)
+    men_elo = EloSystem(k=32, home_advantage=48, reversion=0.20, mov_coeff=0.7)
+    women_elo = EloSystem(k=32, home_advantage=48, reversion=0.20, mov_coeff=0.7)
 
     # Load compact results
     m_reg = load_csv(find_data_file(data_dir, 'MRegularSeasonCompactResults.csv'))
@@ -404,7 +418,7 @@ def load_ordinals(data_dir, season=2026):
 
 
 def compute_win_probability(elo_pred, seed_pred=None, stats_pred=None, ordinal_pred=None,
-                            w_elo=0.40, w_seed=0.10, w_stats=0.30, w_ordinal=0.20):
+                            w_elo=0.35, w_seed=0.15, w_stats=0.30, w_ordinal=0.20):
     """Combine multiple prediction signals into final probability."""
     weights = []
     preds = []
@@ -577,7 +591,8 @@ class TrainedModel:
         self.feature_names = []
 
     def _extract_features(self, team_stats_a, team_stats_b, seed_a, seed_b,
-                          elo_pred, quality_a, quality_b, ordinal_a, ordinal_b):
+                          elo_pred, quality_a, quality_b, ordinal_a, ordinal_b,
+                          momentum_a=None, momentum_b=None):
         """Extract differential features for a matchup."""
         features = {}
 
@@ -601,6 +616,12 @@ class TrainedModel:
             features['ordinal_diff'] = ordinal_b - ordinal_a
         else:
             features['ordinal_diff'] = 0.0
+
+        # Momentum differential
+        if momentum_a is not None and momentum_b is not None:
+            features['momentum_diff'] = momentum_a - momentum_b
+        else:
+            features['momentum_diff'] = 0.0
 
         # Team stats differentials
         if team_stats_a is not None and team_stats_b is not None:
@@ -805,6 +826,7 @@ def generate_submission(data_dir, output_file, current_season=2026):
                     elo_pred,
                     tr_bt.get_quality(train_s, team_a), tr_bt.get_quality(train_s, team_b),
                     tr_ordinals.get(team_a), tr_ordinals.get(team_b),
+                    elo_sys.get_momentum(team_a), elo_sys.get_momentum(team_b),
                 )
                 training_data.append((features, outcome))
 
@@ -858,11 +880,12 @@ def generate_submission(data_dir, output_file, current_season=2026):
             bt_model.get_quality(season, team_a), bt_model.get_quality(season, team_b),
             ordinals.get(team_a) if not is_women else None,
             ordinals.get(team_b) if not is_women else None,
+            elo_system.get_momentum(team_a), elo_system.get_momentum(team_b),
         )
         trained_pred = trained_model.predict(features)
 
-        # Blend
-        final_prob = 0.30 * trained_pred + 0.70 * ensemble_pred
+        # Blend: 20% trained model, 80% ensemble (optimized via backtest)
+        final_prob = 0.20 * trained_pred + 0.80 * ensemble_pred
 
         predictions.append({'ID': matchup_id, 'Pred': f'{final_prob:.6f}'})
 
@@ -953,7 +976,8 @@ def validate_submission(predictions):
 
 
 def backtest(data_dir, test_seasons=None, elo_k=32, elo_home=48, elo_reversion=0.20,
-             mov_coeff=0.7, seed_coeff=0.175, verbose=True):
+             mov_coeff=0.7, seed_coeff=0.30, blend_trained=0.20, verbose=True,
+             w_elo=0.35, w_seed=0.15, w_stats=0.30, w_ordinal=0.20):
     """Backtest the trained model against historical tournament results.
 
     Uses leave-one-season-out cross-validation: for each test season,
@@ -1124,6 +1148,8 @@ def backtest(data_dir, test_seasons=None, elo_k=32, elo_home=48, elo_reversion=0
                         tr_bt.get_quality(train_s, team_b),
                         tr_ordinals.get(team_a),
                         tr_ordinals.get(team_b),
+                        elo_sys.get_momentum(team_a),
+                        elo_sys.get_momentum(team_b),
                     )
                     training_data.append((features, outcome))
 
@@ -1167,6 +1193,8 @@ def backtest(data_dir, test_seasons=None, elo_k=32, elo_home=48, elo_reversion=0
                     bt_model.get_quality(test_season, team_b),
                     ordinals.get(team_a),
                     ordinals.get(team_b),
+                    elo_system.get_momentum(team_a),
+                    elo_system.get_momentum(team_b),
                 )
 
                 # Blend trained model with simple ensemble
@@ -1188,10 +1216,12 @@ def backtest(data_dir, test_seasons=None, elo_k=32, elo_home=48, elo_reversion=0
                 ord_b = ordinals.get(team_b)
                 ord_pred = ordinal_prediction(ord_a, ord_b) if (ord_a and ord_b) else None
 
-                ensemble_pred = compute_win_probability(elo_pred, seed_pred, sp, ord_pred)
+                ensemble_pred = compute_win_probability(elo_pred, seed_pred, sp, ord_pred,
+                                                       w_elo=w_elo, w_seed=w_seed,
+                                                       w_stats=w_stats, w_ordinal=w_ordinal)
 
-                # Blend: 30% trained model, 70% simple ensemble
-                pred = 0.30 * trained_pred + 0.70 * ensemble_pred
+                # Blend trained model with simple ensemble
+                pred = blend_trained * trained_pred + (1 - blend_trained) * ensemble_pred
 
                 brier = (pred - actual) ** 2
                 season_brier += brier
