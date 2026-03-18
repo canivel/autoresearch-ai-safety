@@ -1,0 +1,7 @@
+experiment_id	description	brier_score	brier_delta	accuracy	notes	kept
+000	Baseline: Elo + stats + seeds + ordinals ensemble	0.1742	0.0000	75.4%	2022=0.1886/73.1%, 2023=0.1879/73.1%, 2024=0.1719/73.9%, 2025=0.1483/81.3%	yes
+001	Add Four Factors to stats prediction	0.1741	-0.0001	75.7%	Marginal improvement from eFG%, TO%, OR%, FT rate	yes
+002	Elo grid search: k=32, home=48, rev=0.20, mov=0.7	0.1691	-0.0050	N/A	Best from grid search (partial, 256 combos)	yes
+003	Ensemble weights: elo=0.35, seed=0.15, stats=0.30, ord=0.20	0.1723	-0.0019	N/A	Better weight distribution found in grid search	yes
+004	Bradley-Terry team quality model (RADDAR-style)	0.1925	+0.0183	75.4%	Standalone trained model overfits, esp 2022	no
+005	30% trained + 70% ensemble blend	0.1680	-0.0062	75.0%	Best blend ratio. 2022=0.1898, 2023=0.1820, 2024=0.1736, 2025=0.1268	yes
