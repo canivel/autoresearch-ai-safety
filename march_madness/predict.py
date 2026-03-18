@@ -10,11 +10,11 @@ men's and women's basketball tournaments using:
 4. Logistic regression combining multiple signals
 
 Usage:
-    python predict.py --data-dir ./data --output submission.csv
+    # Auto-download from Kaggle (requires KAGGLE_API_TOKEN env var):
+    python predict.py --output submission.csv
 
-Data should be downloaded from the Kaggle competition:
-    kaggle competitions download -c march-machine-learning-mania-2025
-    unzip march-machine-learning-mania-2025.zip -d ./data
+    # Or specify local data directory:
+    python predict.py --data-dir ./data --output submission.csv
 """
 
 import argparse
@@ -726,10 +726,29 @@ def backtest(data_dir, test_seasons=None):
         print(f"  (Lower Brier score is better. Baseline 0.25 for 50/50 predictions)")
 
 
+def download_data():
+    """Download competition data using kagglehub."""
+    try:
+        import kagglehub
+        print("Downloading data from Kaggle...")
+        path = kagglehub.competition_download('march-machine-learning-mania-2026')
+        print(f"Data downloaded to: {path}")
+        return str(path)
+    except ImportError:
+        print("kagglehub not installed. Install with: pip install kagglehub")
+        print("Then set KAGGLE_API_TOKEN environment variable.")
+        sys.exit(1)
+    except Exception as e:
+        print(f"Failed to download data: {e}")
+        print("Set KAGGLE_API_TOKEN env var or use --data-dir to specify local data.")
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(description='March Madness 2026 Predictions')
-    parser.add_argument('--data-dir', type=str, default='./data',
-                        help='Directory containing competition data files')
+    parser.add_argument('--data-dir', type=str, default=None,
+                        help='Directory containing competition data files. '
+                             'If not specified, downloads from Kaggle via kagglehub.')
     parser.add_argument('--output', type=str, default='submission.csv',
                         help='Output submission CSV file')
     parser.add_argument('--season', type=int, default=2026,
@@ -739,10 +758,12 @@ def main():
 
     args = parser.parse_args()
 
+    data_dir = args.data_dir if args.data_dir else download_data()
+
     if args.backtest:
-        backtest(args.data_dir)
+        backtest(data_dir)
     else:
-        generate_submission(args.data_dir, args.output, args.season)
+        generate_submission(data_dir, args.output, args.season)
 
 
 if __name__ == '__main__':
